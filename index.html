@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PronoStat Pro</title>
+  <link rel="manifest" href="./manifest.json" />
+  <meta name="theme-color" content="#0f172a" />
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 16px 16px 80px 16px; background: #0f172a; color: #f8fafc; }
+    h1, h2 { margin-top: 0; }
+    .card { background: #1e293b; padding: 14px; border-radius: 10px; margin-bottom: 12px; }
+    .special-box { border: 1px solid #f59e0b; background: #292524; padding: 10px; border-radius: 8px; margin-top: 8px; }
+    input, button { width: 100%; box-sizing: border-box; padding: 10px; margin-top: 8px; border-radius: 8px; border: none; font-size: 15px; }
+    button { background: #16a34a; color: #fff; font-weight: bold; cursor: pointer; }
+    button.secondary { background: #2563eb; }
+    .footer-legal { margin-top: 24px; font-size: 13px; text-align: center; }
+    .footer-legal a { color: #38bdf8; margin: 0 8px; }
+    .banner-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #020617; color: #94a3b8; text-align: center; padding: 10px; font-size: 12px; border-top: 1px solid #334155; }
+  </style>
+</head>
+<body>
+  <h1>PronoStat Pro</h1>
+  <p>Pronostics sportifs 100 % gratuits avec publicités.</p>
+
+  <section class="card">
+    <h2>Pronostics du jour</h2>
+    <div id="predictions-list">Chargement des pronostics...</div>
+  </section>
+
+  <section class="card">
+    <h2>Espace Admin (Clé requise)</h2>
+    <input type="password" id="admin-key" placeholder="Clé secrète admin" />
+    <input type="text" id="match-title" placeholder="Match (ex: Côte d'Ivoire vs Mali)" />
+    <input type="text" id="main-pick" placeholder="Pronostic principal (ex: Victoire domicile)" />
+    <input type="text" id="special-pick" placeholder="Pronostic spécial (débloqué par pub récompensée)" />
+    <button type="button" id="publish-btn">Publier le pronostic</button>
+    <p id="admin-status"></p>
+  </section>
+
+  <footer class="footer-legal">
+    <a href="https://alexamoak4-del.github.io/pronostat-légal/confidentialité.html" target="_blank" rel="noopener">Politique de confidentialité</a>
+    <a href="https://alexamoak4-del.github.io/pronostat-légal/app-ads.txt" target="_blank" rel="noopener">app-ads.txt</a>
+  </footer>
+
+  <div class="banner-bar">
+    Espace Bannière AdMob (PronoStat_Banner_Bottom)
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    const PRONOSTAT_CONFIG = {
+      adminKey: "PRONOS2026",
+      adMob: {
+        publisherId: "pub-1727365437113174",
+        appId: "ca-app-pub-1727365437113174~6295281652",
+        bannerUnitId: "ca-app-pub-1727365437113174/2743049458",
+        interstitialUnitId: "ca-app-pub-1727365437113174/2711259867",
+        rewardedUnitId: "ca-app-pub-1727365437113174/2417861802"
+      },
+      firebaseConfig: {
+        projectId: "pronostat-pro"
+        // Ajoutez ici : apiKey, authDomain, storageBucket, messagingSenderId, appId
+      }
+    };
+
+    const app = initializeApp(PRONOSTAT_CONFIG.firebaseConfig);
+    const db = getFirestore(app);
+    const listEl = document.getElementById("predictions-list");
+    const unlockedSpecials = new Set();
+
+    function triggerInterstitialSafe() {
+      window.AndroidAdsBridge?.showInterstitial?.(PRONOSTAT_CONFIG.adMob.interstitialUnitId);
+    }
+
+    function unlockSpecialWithReward(id, renderFn) {
+      if (unlockedSpecials.has(id)) {
+        renderFn();
+        return;
+      }
+      if (window.AndroidAdsBridge?.showRewarded) {
+        window.__onPronoStatRewardEarned = () => {
+          unlockedSpecials.add(id);
+          renderFn();
+        };
+        window.AndroidAdsBridge.showRewarded(PRONOSTAT_CONFIG.adMob.rewardedUnitId);
+      } else {
+        unlockedSpecials.add(id);
+        renderFn();
+      }
+    }
+
+    async function loadPredictions() {
+      try {
+        const q = query(collection(db, "predictions"), orderBy("createdAt", "desc"));
+        const snap = await getDocs(q);
+        if (snap.empty) {
+          listEl.innerHTML = "<p>Aucun pronostic publié pour le moment.</p>";
+          return;
+        }
+        listEl.innerHTML = "";
+        snap.forEach((docSnap) => {
+          const data = docSnap.data();
+          const item = document.createElement("div");
+          item.className = "card";
+          item.innerHTML = `
+            <strong>${data.match || "Match"}</strong>
+            <p>Pronostic : ${data.mainPick || "-"}</p>
+            <div class="special-box" id="special-${docSnap.id}">
+              <em>Pronostic spécial verrouillé</em>
+              <button type="button" class="secondary" id="btn-${docSnap.id}">Débloquer le pronostic spécial</button>
+            </div>
+          `;
+          listEl.appendChild(item);
+
+          const btn = item.querySelector(`#btn-${docSnap.id}`);
+          const box = item.querySelector(`#special-${docSnap.id}`);
+          const showSpecial = () => {
+            box.innerHTML = `<strong>Pronostic spécial :</strong> ${data.specialPick || "Aucun pronostic spécial"}`;
+          };
+          btn.addEventListener("click", () => {
+            unlockSpecialWithReward(docSnap.id, showSpecial);
+          });
+        });
+        triggerInterstitialSafe();
+      } catch (err) {
+        listEl.innerHTML = `<p>Erreur de chargement Firestore : ${err.message}</p>`;
+      }
+    }
+
+    document.getElementById("publish-btn").addEventListener("click", async () => {
+      const keyInput = document.getElementById("admin-key").value.trim();
+      const match = document.getElementById("match-title").value.trim();
+      const mainPick = document.getElementById("main-pick").value.trim();
+      const specialPick = document.getElementById("special-pick").value.trim();
+      const statusEl = document.getElementById("admin-status");
+
+      if (keyInput !== PRONOSTAT_CONFIG.adminKey) {
+        statusEl.textContent = "Clé admin incorrecte.";
+        return;
+      }
+      if (!match || !mainPick) {
+        statusEl.textContent = "Renseignez au moins le match et le pronostic principal.";
+        return;
+      }
+
+      try {
+        await addDoc(collection(db, "predictions"), {
+          match,
+          mainPick,
+          specialPick,
+          createdAt: serverTimestamp()
+        });
+        document.getElementById("match-title").value = "";
+        document.getElementById("main-pick").value = "";
+        document.getElementById("special-pick").value = "";
+        statusEl.textContent = "Pronostic publié dans pronostat-pro.";
+        loadPredictions();
+      } catch (err) {
+        statusEl.textContent = `Erreur d'écriture : ${err.message}`;
+      }
+    });
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    }
+
+    window.AndroidAdsBridge?.showBanner?.(PRONOSTAT_CONFIG.adMob.bannerUnitId);
+    loadPredictions();
+  </script>
+</body>
+</html>
