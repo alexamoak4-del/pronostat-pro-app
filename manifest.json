@@ -1,0 +1,10 @@
+{
+  "name": "PronoStat Pro",
+  "short_name": "PronoStat Pro",
+  "description": "Application gratuite de pronostics sportifs avec publicités.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": []
+}
